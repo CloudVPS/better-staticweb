@@ -8,7 +8,7 @@ setup(name='better_staticweb',
     author='Koert van der Veer, CloudVPS',
     author_email='koert@cloudvps.com',
     url='https://github.com/CloudVPS/better-staticweb',
-    py_modules=['staticweb'],
+    py_modules=['better_staticweb'],
     requires=['swift(>=1.7)'],
     entry_points = {
         'paste.filter_factory': [
