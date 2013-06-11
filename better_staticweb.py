@@ -105,13 +105,12 @@ Example usage of this middleware via ``swift``:
 from urllib import quote as urllib_quote
 
 from swift.common.utils import cache_from_env, human_readable, split_path, \
-    config_true_value, json
+    TRUE_VALUES, json
 from swift.common.wsgi import make_pre_authed_env, make_pre_authed_request, \
     WSGIContext
 from swift.common.http import is_success, is_redirection, HTTP_NOT_FOUND
-from swift.common.swob import Response, HTTPMovedPermanently, HTTPNotFound
 
-import ninja2
+import jinja2
 
 
 default_template = """
@@ -283,9 +282,11 @@ class _StaticWebContext(WSGIContext):
         :param start_response: The original WSGI start_response hook.
         :param prefix: Any prefix desired for the container listing.
         """
-        if not config_true_value(self._container_info['listings']):
-            resp = HTTPNotFound()(env, self._start_response)
-            return self._error_response(resp, env, start_response)
+        if self._container_info['web-listings'].lower() not in TRUE_VALUES:
+            start_response("404 Not Found", [])
+            return "Not found"
+            # resp = HTTPNotFound()(env, self._start_response)
+            # return self._error_response(resp, env, start_response)
 
         tmp_env = make_pre_authed_env(
             env, 'GET', '/%s/%s/%s' % (
@@ -306,11 +307,13 @@ class _StaticWebContext(WSGIContext):
         if body:
             listing = json.loads(body)
         if not listing:
-            resp = HTTPNotFound()(env, self._start_response)
-            return self._error_response(resp, env, start_response)
+            start_response("404 Not Found", [])
+            return "Not found"
+            # resp = HTTPNotFound()(env, self._start_response)
+            # return self._error_response(resp, env, start_response)
 
         # TODO: load template from object store
-        template = ninja2.Template(default_template)
+        template = jinja2.Template(default_template)
 
         context = {
             'meta': dict((k.replace('-','_').lower(),v) for k,v in
@@ -337,8 +340,8 @@ class _StaticWebContext(WSGIContext):
 
         headers = {'Content-Type': 'text/html; charset=UTF-8'}
 
-        resp = Response(headers=headers, body=template.generate(context))
-        return resp(env, start_response)
+        start_response("200 OK", headers.items())
+        return template.generate(context)
 
     def handle_container(self, env, start_response):
         """
@@ -350,14 +353,17 @@ class _StaticWebContext(WSGIContext):
         self._get_container_info(env)
 
         if not self._listings and not self._index:
-            if config_true_value(env.get('HTTP_X_WEB_MODE', 'f')):
-                return HTTPNotFound()(env, start_response)
+            if env.get('HTTP_X_WEB_MODE', 'f') in TRUE_VALUES:
+                start_response("404 Not Found", [])
+                return "Not found"
+                # return HTTPNotFound()(env, start_response)
             return self.app(env, start_response)
 
         if env['PATH_INFO'][-1] != '/':
-            resp = HTTPMovedPermanently(
-                location=(env['PATH_INFO'] + '/'))
-            return resp(env, start_response)
+            start_response("301 Moved Permanently", [
+                ('Location',env['PATH_INFO'] + '/')]
+            )
+            return ""
         if not self._index:
             return self._listing(env, start_response)
         tmp_env = dict(env)
@@ -412,9 +418,10 @@ class _StaticWebContext(WSGIContext):
             status_int = self._get_status_int()
             if is_success(status_int) or is_redirection(status_int):
                 if env['PATH_INFO'][-1] != '/':
-                    resp = HTTPMovedPermanently(
-                        location=env['PATH_INFO'] + '/')
-                    return resp(env, start_response)
+                    start_response("301 Moved Permanently", [
+                        ('Location',env['PATH_INFO'] + '/')]
+                    )
+                    return ""
                 start_response(self._response_status, self._response_headers,
                                self._response_exc_info)
                 return resp
@@ -430,10 +437,14 @@ class _StaticWebContext(WSGIContext):
                 body = ''.join(resp)
                 if not is_success(self._get_status_int()) or not body or \
                         not json.loads(body):
-                    resp = HTTPNotFound()(env, self._start_response)
-                    return self._error_response(resp, env, start_response)
-                resp = HTTPMovedPermanently(location=env['PATH_INFO'] + '/')
-                return resp(env, start_response)
+                    start_response("404 Not Found", [])
+                    return "Not found"
+                    # resp = HTTPNotFound()(env, self._start_response)
+                    # return self._error_response(resp, env, start_response)
+                start_response("301 Moved Permanently", [
+                    ('Location',env['PATH_INFO'] + '/')]
+                )
+                return ""
             return self._listing(env, start_response, self.obj)
 
 
@@ -485,7 +496,7 @@ class StaticWeb(object):
 
         # Don't authenticated requetsts, unless x-web-mode is True
         if env.get('REMOTE_USER') and \
-                not config_true_value(env.get('HTTP_X_WEB_MODE', 'f')):
+                env.get('HTTP_X_WEB_MODE', 'f').lower() not in TRUE_VALUES:
             return self.app(env, start_response)
 
         # Don't handle account requests.
