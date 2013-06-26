@@ -80,6 +80,8 @@ default_template = """
 </html>
 """
 
+
+
 def quote(value, safe='/'):
     """
     Patched version of urllib.quote that encodes utf-8 strings before quoting
@@ -146,6 +148,22 @@ class StaticWeb(object):
 
         context = Context(self, env, account, container, obj)
         return context(env, start_response)
+
+def human_readable_size(value):
+    """
+    Returns the byte size in a human readable format; for example 1048576 = "1Mb".
+    """
+    value = float(value)
+
+    suffixes = ['byte', 'Kb','Mb','Gb','Tb','Pb','Eb','Zb','Yb']
+    for suffix in suffixes:
+        if value < 1024:
+            return ("%.0f" % value), suffix
+
+        value /= 1024.0
+
+    return ("%.0f" % (value * 1024.0)), suffixes[-1]
+
 
 
 class Context(object):
@@ -365,12 +383,10 @@ class Context(object):
 
             container_info = container_info or self._get_container_info()
 
-
             context = {
                 'meta': dict(
                     (k.replace('-','_'),v)
                     for (k,v) in container_info.items()),
-                'at_root': False if self.obj else True,
                 'prefix': self.obj,
                 'path': self.env.get('HTTP_ORIGINAL_PATH') or self.env['PATH_INFO'],
                 'subdirs': [item for item in content if 'subdir' in item],
@@ -399,8 +415,7 @@ class Context(object):
 
             context = {
                 'meta': {},
-                'at_root': True,
-                'prefix': True,
+                'prefix': '',
                 'path': '/',
                 'subdirs': content,
                 'files': [],
@@ -432,11 +447,13 @@ class Context(object):
         for subdir in listing['subdirs']:
             if 'bytes' in subdir:
                 subdir['size'] = human_readable(subdir['bytes'])
+                subdir['size_num'], subdir['size_unit'] = human_readable_size(subdir['bytes'])
 
             subdir.setdefault('subdir', subdir.get('name'))
 
         for fil in listing['files']:
             fil['size'] = human_readable(fil['bytes'])
+            fil['size_num'], fil['size_unit'] = human_readable_size(fil['bytes'])
             fil['date'] = fil['last_modified']
             fil['type_classes'] = " ".join(
                 ('type-%s' % t.replace(".", '-'))
@@ -448,8 +465,23 @@ class Context(object):
 
         template_engine = jinja2.Template(template)
 
+        listing.setdefault('at_root', listing['path'].count('/') <= 1)
+        listing.setdefault('account', self.account)
+        listing.setdefault('container', self.container)
+        listing.setdefault('object', self.obj)
+        listing.setdefault('authenticated', any(
+            (header in self.env) for header in
+            ['HTTP_AUTHORIZATION', 'HTTP_X_AUTH_TOKEN'])
+        )
+
+        try:
+            html = template_engine.render(listing)
+        except Exception,e:
+            html = "Could not generate listing<br> %s" % str(e)
+
+
         start_response("200 OK", headers.items())
-        return template_engine.generate(listing)
+        return [html]
 
     def __call__(self, env, start_response):
         """
