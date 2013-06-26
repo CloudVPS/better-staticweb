@@ -32,11 +32,19 @@
       </tr>
       {% endif %}
 
-      {% for item in items %}
-      <tr class="item {{item.type_classes|e}}">
-        <td class="colname"><a href="{{item.name|urlencode|e}}">{{item.name|e}}</a></td>
-        <td class="colsize">{{item.size}}</td>
-        <td class="coldate">{{item.date}}</td>
+      {% for subdir in subdirs %}
+      <tr id="parent" class="item">
+        <td class="colname"><a href="{{subdir.subdir|urlencode|e}}/">{{subdir.subdir|e}}</a></td>
+        <td class="colsize">&nbsp;</td>
+        <td class="coldate">&nbsp;</td>
+      </tr>
+      {% endfor %}
+
+      {% for file in files %}
+      <tr class="item {{file.type_classes|e}}">
+        <td class="colname"><a href="{{file.name|urlencode|e}}">{{file.name|e}}</a></td>
+        <td class="colsize">{{file.size}}</td>
+        <td class="coldate">{{file.date}}</td>
       </tr>
       {% endfor %}
     </table>
