@@ -177,6 +177,7 @@ class Context(object):
         self.container = container
         self.obj = obj
         self.env = env
+        self._container_info = None
 
     def do_internal_get(self, path, method="GET", preauthenticate=False):
         tmp_env = dict(self.env)
@@ -242,11 +243,16 @@ class Context(object):
         if not self.container: # No configurable items in account
             return {}
 
+        if self._container_info:
+            return self._container_info
+
+        self._container_info = {}
+
         if self._cache:
             memcache_key = 'better_static/%s/%s' % (self.account, self.container)
-            cached_data = self._cache.get(memcache_key)
-            if cached_data:
-                return cached_data
+            self._container_info = self._cache.get(memcache_key)
+            if self._container_info:
+                return self._container_info
 
         status, headers, content = self.do_internal_get(
             '/v1/%s/%s' % (self.account, self.container),
@@ -264,9 +270,9 @@ class Context(object):
                 self._cache.set(memcache_key, result,
                                 timeout=self.cache_timeout)
 
-            return result
+            self._container_info = result
 
-        return {}
+        return self._container_info or {}
 
 
     def error_response(self, status, headers, start_response):
@@ -360,15 +366,6 @@ class Context(object):
         return contents
 
     def handle_container(self, start_response):
-        container_info = None
-        if not self.obj:
-            container_info = self._get_container_info()
-            web_index = container_info.get('web-index')
-            if web_index:
-                tmp_env = dict(self.env)
-                tmp_env['PATH_INFO'] += web_index
-                return self.forward_request(tmp_env, start_response)
-
         backend_url = "/v1/%s/%s?delimiter=/&format=json" % (
             self.account,
             self.container
@@ -381,7 +378,7 @@ class Context(object):
         if 200 <= int(status[:3]) < 300:
             content = json.loads(content)
 
-            container_info = container_info or self._get_container_info()
+            container_info = self._get_container_info()
 
             context = {
                 'meta': dict(
@@ -391,9 +388,9 @@ class Context(object):
                 'path': self.env.get('HTTP_ORIGINAL_PATH') or self.env['PATH_INFO'],
                 'subdirs': [item for item in content if 'subdir' in item],
                 'files': [item for item in content if 'name' in item],
-                'powered': self.conf.get("powered" , ''),
             }
 
+            #
             if self.obj:
                 for subdir in context['subdirs']:
                     subdir['subdir'] = subdir['subdir'][len(self.obj):]
@@ -419,7 +416,6 @@ class Context(object):
                 'path': '/',
                 'subdirs': content,
                 'files': [],
-                'powered': self.conf.get("powered" , ''),
             }
 
             return self.mklisting(context, start_response)
@@ -469,6 +465,8 @@ class Context(object):
         listing.setdefault('account', self.account)
         listing.setdefault('container', self.container)
         listing.setdefault('object', self.obj)
+
+        listing.setdefault('powered', self.conf.get("powered" , ''))
         listing.setdefault('authenticated', any(
             (header in self.env) for header in
             ['HTTP_AUTHORIZATION', 'HTTP_X_AUTH_TOKEN'])
@@ -478,7 +476,6 @@ class Context(object):
             html = template_engine.render(listing)
         except Exception,e:
             html = "Could not generate listing<br> %s" % str(e)
-
 
         start_response("200 OK", headers.items())
         return [html]
@@ -524,17 +521,30 @@ class Context(object):
             return answer
 
     def dispatch(self, start_response):
+        if self.container and not self.obj:
+            if self.env['PATH_INFO'].endswith('/'):
+                container_info = self._get_container_info()
+                web_index = container_info.get('web-index')
+                if web_index:
+                    tmp_env = dict(self.env)
+                    tmp_env['PATH_INFO'] += web_index
+                    return self.app(tmp_env, start_response)
+            else:
+                redirect_to = '/v1/%s/%s/' % (self.account, self.container)
+                start_response("302 Found", [("location", redirect_to)])
+                return ""
+
+        # don't bother creating an html-index if the client doesn't like HTML
+        # in the first place.
+        if "text/html" not in self.env.get('HTTP_ACCEPT', ''):
+            return self.app(self.env, start_response)
 
         if self.obj and not self.obj.endswith('/'):
             return self.handle_object(start_response)
-        elif not self.container:
-            return self.handle_account(start_response)
-        elif not self.env['PATH_INFO'].endswith('/'):
-            redirect_to = '/v1/%s/%s/' % (self.account, self.container)
-            start_response("302 Found", [("location", redirect_to)])
-            return ""
-        else:
+        elif self.container:
             return self.handle_container(start_response)
+        else:
+            return self.handle_account(start_response)
 
 
 def filter_factory(global_conf, **local_conf):
