@@ -180,6 +180,7 @@ class Context(object):
         self._container_info = None
 
     def do_internal_get(self, path, method="GET", preauthenticate=False):
+
         tmp_env = dict(self.env)
         tmp_env['REQUEST_METHOD'] = "GET"
         if '?' in path:
@@ -237,7 +238,7 @@ class Context(object):
 
     def _get_container_info(self):
         """
-        Retrieves all x-conainer-meta-web-* headers, and return them as a dict.
+        Retrieves all x-container-meta-web-* headers, and return them as a dict.
         """
 
         if not self.container: # No configurable items in account
@@ -255,14 +256,14 @@ class Context(object):
                 return self._container_info
 
         status, headers, content = self.do_internal_get(
-            '/v1/%s/%s' % (self.account, self.container),
+            '/v1/%s/%s/' % (self.account, self.container),
             method='HEAD',
             preauthenticate=True
         )
 
         if 200 <= int(status[:3]) < 300:
             result = dict(
-                (k[17:],v) for k,v in headers
+                (k[17:].lower(),v) for k,v in headers
                 if k.lower().startswith('x-container-meta-')
             )
 
@@ -299,11 +300,13 @@ class Context(object):
         if web_error:
             err_status, err_headers, err_content = self.do_internal_get(
                 "/v1/%s/%s/%s%s" % (
-                self.account, self.container, status[:3], web_error)
+                self.account, self.container, status[:3], web_error,
+                ),
+                preauthenticate=True
             )
 
             # If the error page handler is found, use it.
-            if err_status[:2] == '200':
+            if err_status[:3] == '200':
                 # Merge the headers.
                 headers.extend(err_headers)
                 start_response(status, err_headers)
@@ -365,7 +368,7 @@ class Context(object):
 
         return contents
 
-    def handle_container(self, start_response):
+    def handle_container(self, start_response, use_preauth):
         backend_url = "/v1/%s/%s?delimiter=/&format=json" % (
             self.account,
             self.container
@@ -373,7 +376,7 @@ class Context(object):
         if self.obj:
             backend_url += "&prefix=" + self.obj
 
-        status, headers, content = self.do_internal_get(backend_url)
+        status, headers, content = self.do_internal_get(backend_url, preauthenticate=use_preauth)
 
         if 200 <= int(status[:3]) < 300:
             content = json.loads(content)
@@ -399,6 +402,7 @@ class Context(object):
 
             return self.mklisting(context, start_response)
         else:
+
             start_response(status, headers)
             return [content]
 
@@ -488,7 +492,9 @@ class Context(object):
         :param start_response: The WSGI start_response hook.
         """
 
-        if "text/html" not in env.get('HTTP_ACCEPT', ''):
+        container_info = self._get_container_info()
+
+        if not container_info.get('web-error') and "text/html" not in env.get('HTTP_ACCEPT', ''):
             # don't bother trying to inject HTML error pages if the client
             # didn't ask for HTML in the first place.
             return self.dispatch(start_response)
@@ -521,30 +527,45 @@ class Context(object):
             return answer
 
     def dispatch(self, start_response):
-        if self.container and not self.obj:
+        container_info = self._get_container_info()
+        if self.container:
             if self.env['PATH_INFO'].endswith('/'):
-                container_info = self._get_container_info()
                 web_index = container_info.get('web-index')
                 if web_index:
                     tmp_env = dict(self.env)
                     tmp_env['PATH_INFO'] += web_index
                     return self.app(tmp_env, start_response)
-            else:
+            elif not self.obj:
                 redirect_to = '/v1/%s/%s/' % (self.account, self.container)
                 start_response("302 Found", [("location", redirect_to)])
                 return ""
 
+        # if listings are explicitly enabled or disabled, follow that
+        listings = container_info.get('web-listings', 'auto').lower()
+
+
+        if listings in ('false', 'no', '0', 'off'):
+            have_listings = False
+            use_preauth = False
+        elif listings in  ('true', 'yes', '1', 'on'):
+            have_listings = True
+            use_preauth = True
+        else:
+            have_listings = "text/html" in self.env.get('HTTP_ACCEPT', '')
+            use_preauth = False
+
         # don't bother creating an html-index if the client doesn't like HTML
         # in the first place.
-        if "text/html" not in self.env.get('HTTP_ACCEPT', ''):
+        if have_listings:
+            if self.obj and not self.obj.endswith('/'):
+                return self.handle_object(start_response )
+            elif self.container:
+                return self.handle_container(start_response, use_preauth)
+            else:
+                return self.handle_account(start_response)
+        else:
             return self.app(self.env, start_response)
 
-        if self.obj and not self.obj.endswith('/'):
-            return self.handle_object(start_response)
-        elif self.container:
-            return self.handle_container(start_response)
-        else:
-            return self.handle_account(start_response)
 
 
 def filter_factory(global_conf, **local_conf):
