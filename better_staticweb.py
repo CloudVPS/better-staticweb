@@ -36,10 +36,17 @@ default_template = """
     <link rel="stylesheet" type="text/css" href="{{meta.listings_css|e}}">
   {% else %}
     <style>
-       h1 {font-size: 1em; font-weight: bold;}
-       th {text-align: left; padding: 0px 1em 0px 1em;}
-       td {padding: 0px 1em 0px 1em;}
-       a {text-decoration: none;}
+      html { margin:0px;padding:0px; font-family: verdana, sans-serif;}
+      body {    width:640px; margin:auto; }
+      a {color:inherit;text-decoration:none;}
+      a:hover { color:#057ec1; text-decoration: underline;}
+      h1 { margin:0; padding:24px 0 16px; font-size: 28px;}
+
+      table { padding:0px; border-collapse:collapse; width:100%; }
+      th { text-align:left; color: #666; border-bottom:1px solid #777;}
+      td { padding-right:24px; height:32px; }
+      td.colsize { font-size:0.9em; text-align:right;}
+      td.coldate { font-size:0.85em; }
     </style>
   {% endif %}
   </head>
@@ -434,8 +441,7 @@ class Context(object):
         # Load the template
         template_name = container_info.get('web-listings-template')
 
-        if template_name:
-            print template_name
+        if template_name and template_name != '-':
             if template_name.startswith("../"):
                 template_path = "/v1/%s/%s" % (self.account, template_name[3:])
             else:
