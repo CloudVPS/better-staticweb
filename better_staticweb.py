@@ -429,20 +429,40 @@ class Context(object):
 
     def mklisting(self, listing, start_response):
 
+        container_info = self._get_container_info()
+
         # Load the template
-        #template_name = container_info.get('web-listing-template')
-        template = default_template
+        template_name = container_info.get('web-listings-template')
 
-        # Try to find a local handler.
-        local_path = os.path.join(
-            self.conf.get('template_path', __file__),
-            "index.html")
+        if template_name:
+            print template_name
+            if template_name.startswith("../"):
+                template_path = "/v1/%s/%s" % (self.account, template_name[3:])
+            else:
+                template_path = "/v1/%s/%s/%s" % (self.account, self.container, template_name)
 
-        try:
-            with open(local_path, 'r') as f:
-                template = f.read()
-        except IOError:
-            pass
+            # TODO: ponder whether this should be preauthenticated
+            status, headers, answer = self.do_internal_get(template_path)
+            if status[0] == '2':
+                template = answer
+            else:
+                # Forward any errors.
+                start_response(status, headers)
+                return answer
+
+        else:
+            template = default_template
+
+            # Try to find a local handler.
+            local_path = os.path.join(
+                self.conf.get('template_path', __file__),
+                "index.html")
+
+            try:
+                with open(local_path, 'r') as f:
+                    template = f.read()
+            except IOError:
+                pass
 
         for subdir in listing['subdirs']:
             if 'bytes' in subdir:
