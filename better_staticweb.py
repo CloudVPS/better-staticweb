@@ -368,6 +368,11 @@ class Context(object):
                 # Subobjects were found. treat this like a directory.
                 redirect_to = '/v1/%s/%s/%s/' % (
                     self.account, self.container, self.obj)
+
+                qs = self.env.get('QUERY_STRING')
+                if qs:
+                    redirect_to += "?" + qs
+
                 start_response("302 Found", [("location", redirect_to)])
                 return ""
 
@@ -563,6 +568,10 @@ class Context(object):
                     return self.app(tmp_env, start_response)
             elif not self.obj:
                 redirect_to = '/v1/%s/%s/' % (self.account, self.container)
+                qs = self.env.get('QUERY_STRING')
+                if qs:
+                    redirect_to += "?" + qs
+
                 start_response("302 Found", [("location", redirect_to)])
                 return ""
 
