@@ -350,7 +350,7 @@ class Context(object):
         return ["<html><body><h1>", status, "</h1></body></html>"]
 
 
-    def handle_object(self, start_response):
+    def handle_object(self, start_response, use_preauth):
 
         status, contents = self.forward_request()
 
@@ -362,7 +362,7 @@ class Context(object):
                 self.account, self.container, self.obj
             )
 
-            status_inner, headers_inner, contents_inner = self.do_internal_get(backend_url)
+            status_inner, headers_inner, contents_inner = self.do_internal_get(backend_url, preauthenticate=use_preauth)
 
             if len(contents_inner) > 2:
                 # Subobjects were found. treat this like a directory.
@@ -584,7 +584,7 @@ class Context(object):
         # in the first place.
         if have_listings:
             if self.obj and not self.obj.endswith('/'):
-                return self.handle_object(start_response )
+                return self.handle_object(start_response, use_preauth)
             elif self.container:
                 return self.handle_container(start_response, use_preauth)
             else:
