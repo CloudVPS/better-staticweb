@@ -523,9 +523,16 @@ class Context(object):
         :param start_response: The WSGI start_response hook.
         """
 
+        self.want_html = "text/html" in env.get('HTTP_ACCEPT', '')
+        self.is_authenticated = any(
+            auth_header in env
+            for auth_header in ("HTTP_X_AUTH_TOKEN", "HTTP_AUTHORIZATION",
+                'HTTP_X_STORAGE_USER', 'HTTP_X_AUTH_USER')
+        )
+
         container_info = self._get_container_info()
 
-        if not container_info.get('web-error') and "text/html" not in env.get('HTTP_ACCEPT', ''):
+        if not container_info.get('web-error') and not self.want_html:
             # don't bother trying to inject HTML error pages if the client
             # didn't ask for HTML in the first place.
             return self.dispatch(start_response)
@@ -566,7 +573,7 @@ class Context(object):
                     tmp_env = dict(self.env)
                     tmp_env['PATH_INFO'] += web_index
                     return self.app(tmp_env, start_response)
-            elif not self.obj:
+            elif not self.obj and self.want_html:
                 redirect_to = '/v1/%s/%s/' % (self.account, self.container)
                 qs = self.env.get('QUERY_STRING')
                 if qs:
@@ -578,15 +585,14 @@ class Context(object):
         # if listings are explicitly enabled or disabled, follow that
         listings = container_info.get('web-listings', 'auto').lower()
 
-
         if listings in ('false', 'no', '0', 'off'):
             have_listings = False
             use_preauth = False
         elif listings in  ('true', 'yes', '1', 'on'):
-            have_listings = True
+            have_listings = self.want_html if self.is_authenticated else True
             use_preauth = True
         else:
-            have_listings = "text/html" in self.env.get('HTTP_ACCEPT', '')
+            have_listings = self.want_html
             use_preauth = False
 
         # don't bother creating an html-index if the client doesn't like HTML
