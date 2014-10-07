@@ -276,7 +276,7 @@ class Context(object):
 
             if self._cache:
                 self._cache.set(memcache_key, result,
-                                timeout=self.cache_timeout)
+                                time=self.cache_timeout)
 
             self._container_info = result
 
