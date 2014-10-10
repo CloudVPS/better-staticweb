@@ -25,6 +25,8 @@ import itertools
 import urlparse
 import os.path
 
+from swift.proxy.controllers.base import get_container_info
+
 default_template = """
 <!DOCTYPE HTML PUBLIC
     "-//W3C//DTD HTML 4.01 Transitional//EN"
@@ -88,7 +90,6 @@ default_template = """
 """
 
 
-
 def quote(value, safe='/'):
     """
     Patched version of urllib.quote that encodes utf-8 strings before quoting
@@ -99,6 +100,7 @@ def quote(value, safe='/'):
 
 
 class StaticWeb(object):
+
     """
     The Static Web WSGI middleware filter; serves container data as a static
     web site. See `staticweb`_ for an overview.
@@ -148,7 +150,7 @@ class StaticWeb(object):
 
         # If non-html was explicitly requested, don't bother trying to format
         # the html
-        params = urlparse.parse_qs(env.get('QUERY_STRING',''))
+        params = urlparse.parse_qs(env.get('QUERY_STRING', ''))
 
         if 'format' in params and params['format'] != ['html']:
             return self.app(env, start_response)
@@ -156,13 +158,14 @@ class StaticWeb(object):
         context = Context(self, env, account, container, obj)
         return context(env, start_response)
 
+
 def human_readable_size(value):
     """
     Returns the byte size in a human readable format; for example 1048576 = "1Mb".
     """
     value = float(value)
 
-    suffixes = ['byte', 'Kb','Mb','Gb','Tb','Pb','Eb','Zb','Yb']
+    suffixes = ['byte', 'Kb', 'Mb', 'Gb', 'Tb', 'Pb', 'Eb', 'Zb', 'Yb']
     for suffix in suffixes:
         if value < 1024:
             return ("%.0f" % value), suffix
@@ -170,7 +173,6 @@ def human_readable_size(value):
         value /= 1024.0
 
     return ("%.0f" % (value * 1024.0)), suffixes[-1]
-
 
 
 class Context(object):
@@ -191,7 +193,7 @@ class Context(object):
         tmp_env = dict(self.env)
         tmp_env['REQUEST_METHOD'] = "GET"
         if '?' in path:
-           tmp_env['PATH_INFO'], tmp_env['QUERY_STRING'] = path.split('?', 1)
+            tmp_env['PATH_INFO'], tmp_env['QUERY_STRING'] = path.split('?', 1)
         else:
             tmp_env['PATH_INFO'] = path
             tmp_env['QUERY_STRING'] = ""
@@ -212,7 +214,7 @@ class Context(object):
 
         answer[2] = self.app(tmp_env, catch_result)
 
-        if not isinstance(answer[2],basestring):
+        if not isinstance(answer[2], basestring):
             answer[2] = "".join(answer[2])
 
         if isinstance(answer[1], dict):
@@ -231,7 +233,6 @@ class Context(object):
             if exc_info:
                 found_status.append(exc_info)
 
-
         answer = self.app(env or self.env, catch_status)
 
         if not found_status:
@@ -248,40 +249,15 @@ class Context(object):
         Retrieves all x-container-meta-web-* headers, and return them as a dict.
         """
 
-        if not self.container: # No configurable items in account
+        if not self.container:  # No configurable items in account
             return {}
 
         if self._container_info:
             return self._container_info
 
-        self._container_info = {}
-
-        if self._cache:
-            memcache_key = 'better_static/%s/%s' % (self.account, self.container)
-            self._container_info = self._cache.get(memcache_key)
-            if self._container_info:
-                return self._container_info
-
-        status, headers, content = self.do_internal_get(
-            '/v1/%s/%s/' % (self.account, self.container),
-            method='HEAD',
-            preauthenticate=True
-        )
-
-        if 200 <= int(status[:3]) < 300:
-            result = dict(
-                (k[17:].lower(),v) for k,v in headers
-                if k.lower().startswith('x-container-meta-')
-            )
-
-            if self._cache:
-                self._cache.set(memcache_key, result,
-                                time=self.cache_timeout)
-
-            self._container_info = result
-
-        return self._container_info or {}
-
+        self._container_info = get_container_info(self.env, self.app,
+                                                  swift_source='BSW') or {}
+        return self._container_info
 
     def error_response(self, status, headers, start_response):
         """
@@ -294,21 +270,20 @@ class Context(object):
         :param start_response: The WSGI start_response hook.
         """
 
-        # Remove content-related headers, as we'll not be sending the associated
-        # content anyway.
+        # Remove content-related headers, as we'll not be sending the
+        # associated content anyway.
         headers = [
-            (k,v) for k,v in headers if
+            (k, v) for k, v in headers if
             not k.lower().startswith("content-")
         ]
 
         # Lets see if X-Container-Meta-Web-Error was set.
         container_info = self._get_container_info()
-        web_error = container_info.get('web-error')
+        web_error = container_info.get('meta', {}).get('web-error')
         if web_error:
             err_status, err_headers, err_content = self.do_internal_get(
-                "/v1/%s/%s/%s%s" % (
-                self.account, self.container, status[:3], web_error,
-                ),
+                "/v1/%s/%s/%s%s" % (self.account, self.container,
+                                    status[:3], web_error),
                 preauthenticate=True
             )
 
@@ -329,7 +304,6 @@ class Context(object):
             with open(local_path, 'r') as f:
                 contents = f.read()
 
-
             headers.extend([
                 ('content-type', 'text/html; charset=UTF-8'),
                 ('content-length', str(len(contents))),
@@ -340,7 +314,6 @@ class Context(object):
         except IOError:
             pass
 
-
         # No local handler was found. Create a new html page with the status
         # code.
         headers.extend([
@@ -349,9 +322,7 @@ class Context(object):
         start_response(status, headers)
         return ["<html><body><h1>", status, "</h1></body></html>"]
 
-
     def handle_object(self, start_response, use_preauth):
-
         status, contents = self.forward_request()
 
         if status[0].startswith("404 "):
@@ -362,7 +333,8 @@ class Context(object):
                 self.account, self.container, self.obj
             )
 
-            status_inner, headers_inner, contents_inner = self.do_internal_get(backend_url, preauthenticate=use_preauth)
+            status_inner, headers_inner, contents_inner = self.do_internal_get(
+                backend_url, preauthenticate=use_preauth)
 
             if len(contents_inner) > 2:
                 # Subobjects were found. treat this like a directory.
@@ -388,7 +360,8 @@ class Context(object):
         if self.obj:
             backend_url += "&prefix=" + self.obj
 
-        status, headers, content = self.do_internal_get(backend_url, preauthenticate=use_preauth)
+        status, headers, content = self.do_internal_get(
+            backend_url, preauthenticate=use_preauth)
 
         if 200 <= int(status[:3]) < 300:
             content = json.loads(content)
@@ -397,8 +370,8 @@ class Context(object):
 
             context = {
                 'meta': dict(
-                    (k.replace('-','_'),v)
-                    for (k,v) in container_info.items()),
+                    (k.replace('-', '_'), v)
+                    for (k, v) in container_info.get('meta', {}).items()),
                 'prefix': self.obj,
                 'path': self.env.get('HTTP_ORIGINAL_PATH') or self.env['PATH_INFO'],
                 'subdirs': [item for item in content if 'subdir' in item],
@@ -441,7 +414,7 @@ class Context(object):
 
     def mklisting(self, listing, start_response):
 
-        container_info = self._get_container_info()
+        container_info = self._get_container_info().get('meta', {})
 
         # Load the template
         template_name = container_info.get('web-listings-template')
@@ -450,7 +423,8 @@ class Context(object):
             if template_name.startswith("../"):
                 template_path = "/v1/%s/%s" % (self.account, template_name[3:])
             else:
-                template_path = "/v1/%s/%s/%s" % (self.account, self.container, template_name)
+                template_path = "/v1/%s/%s/%s" % (
+                    self.account, self.container, template_name)
 
             # TODO: ponder whether this should be preauthenticated
             status, headers, answer = self.do_internal_get(template_path)
@@ -478,13 +452,15 @@ class Context(object):
         for subdir in listing['subdirs']:
             if 'bytes' in subdir:
                 subdir['size'] = human_readable(subdir['bytes'])
-                subdir['size_num'], subdir['size_unit'] = human_readable_size(subdir['bytes'])
+                subdir['size_num'], subdir[
+                    'size_unit'] = human_readable_size(subdir['bytes'])
 
             subdir.setdefault('subdir', subdir.get('name'))
 
         for fil in listing['files']:
             fil['size'] = human_readable(fil['bytes'])
-            fil['size_num'], fil['size_unit'] = human_readable_size(fil['bytes'])
+            fil['size_num'], fil[
+                'size_unit'] = human_readable_size(fil['bytes'])
             fil['date'] = fil['last_modified']
             fil['type_classes'] = " ".join(
                 ('type-%s' % t.replace(".", '-'))
@@ -501,7 +477,7 @@ class Context(object):
         listing.setdefault('container', self.container)
         listing.setdefault('object', self.obj)
 
-        listing.setdefault('powered', self.conf.get("powered" , ''))
+        listing.setdefault('powered', self.conf.get("powered", ''))
         listing.setdefault('authenticated', any(
             (header in self.env) for header in
             ['HTTP_AUTHORIZATION', 'HTTP_X_AUTH_TOKEN'])
@@ -509,7 +485,7 @@ class Context(object):
 
         try:
             html = template_engine.render(listing)
-        except Exception,e:
+        except Exception, e:
             html = "Could not generate listing<br> %s" % str(e)
 
         start_response("200 OK", headers.items())
@@ -527,10 +503,10 @@ class Context(object):
         self.is_authenticated = any(
             auth_header in env
             for auth_header in ("HTTP_X_AUTH_TOKEN", "HTTP_AUTHORIZATION",
-                'HTTP_X_STORAGE_USER', 'HTTP_X_AUTH_USER')
+                                'HTTP_X_STORAGE_USER', 'HTTP_X_AUTH_USER')
         )
 
-        container_info = self._get_container_info()
+        container_info = self._get_container_info().get('meta', {})
 
         if not container_info.get('web-error') and not self.want_html:
             # don't bother trying to inject HTML error pages if the client
@@ -538,7 +514,6 @@ class Context(object):
             return self.dispatch(start_response)
 
         self.env = env
-
 
         found_status = []
 
@@ -558,14 +533,14 @@ class Context(object):
 
         if int(found_status[0][:3]) >= 400:
             return self.error_response(found_status[0], found_status[1],
-                start_response)
+                                       start_response)
 
         else:
             start_response(*found_status)
             return answer
 
     def dispatch(self, start_response):
-        container_info = self._get_container_info()
+        container_info = self._get_container_info().get('meta', {})
         if self.container:
             if self.env['PATH_INFO'].endswith('/'):
                 web_index = container_info.get('web-index')
@@ -588,7 +563,7 @@ class Context(object):
         if listings in ('false', 'no', '0', 'off'):
             have_listings = False
             use_preauth = False
-        elif listings in  ('true', 'yes', '1', 'on'):
+        elif listings in ('true', 'yes', '1', 'on'):
             have_listings = self.want_html if self.is_authenticated else True
             use_preauth = True
         else:
@@ -606,7 +581,6 @@ class Context(object):
                 return self.handle_account(start_response)
         else:
             return self.app(self.env, start_response)
-
 
 
 def filter_factory(global_conf, **local_conf):
