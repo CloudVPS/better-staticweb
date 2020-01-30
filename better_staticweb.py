@@ -138,8 +138,8 @@ class StaticWeb(object):
         if not self._cache:
             self._cache = cache_from_env(env)
 
-        # Don't handle non-GET requests.
-        if env['REQUEST_METHOD'] not in ('HEAD', 'GET'):
+        # Don't handle non-GET requests or subrequests by other middleware.
+        if env['REQUEST_METHOD'] not in ('HEAD', 'GET') or env.get('swift.source', None) != None:
 
             # flush cache if we expect the container metadata being changed.
             if container and not obj and self._cache:
