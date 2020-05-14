@@ -17,7 +17,9 @@
 
 from urllib import quote as urllib_quote
 
+from swift.common.swob import Response
 from swift.common.utils import cache_from_env, split_path, json, human_readable
+
 from StringIO import StringIO
 
 import jinja2
@@ -488,8 +490,8 @@ class Context(object):
         except Exception, e:
             html = "Could not generate listing<br> %s" % str(e)
 
-        start_response("200 OK", headers.items())
-        return [html]
+        resp = Response(headers=headers, body=html)
+        return resp(self.env, start_response)
 
     def __call__(self, env, start_response):
         """
